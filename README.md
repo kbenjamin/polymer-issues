@@ -1,7 +1,7 @@
 # Polymer 1.0 / 1.x Issues, Problems, and Pain Points
 ##Lessons Learned the Hard Way
 
-_It Just Doesn't Work�_
+_It Just Doesn't Work™_
 
 ## Data-driven Programming Model
 
@@ -105,6 +105,7 @@ Polymer({
 Creates this instead:
 
 `first.item = wrapper.myitem`
+
 `second.item = wrapper.myitem`
 
 Note: `wrapper.myitem` could be either value, depending on the timing of the last setter.
@@ -272,7 +273,7 @@ stateChanged: function(newVal, oldVal){
 
 ## Timing Issues Resolved
 
-To resolve these issues, both internally, I've created this Behavior:
+To resolve these issues, both internally and externally, i.e. between siblings, I've created this Behavior:
 
 ### Execution Queue Code (ReadyQueueBehavior)
 
@@ -286,7 +287,6 @@ MyBehaviors.ReadyQueueBehavior = {
       type: Boolean,
       value: false,
       notify: true,
-      reflectToAttribute: true,
       observer: 'appReadyChanged'
     },
     queue: {
@@ -349,3 +349,81 @@ MyBehaviors.ReadyQueueBehavior = {
 By using the queue, action is deferred until `WebComponentsReady` fires but all other element creation methods can continue. While it might seem that we can use the `ready` or `attached` lifecycle methods, when components are data-driven, that model doesn't work. The queue does.
 
 I've found this technique valuable for preserving the independence of elements so as not to have to rely on some master controller to be aware of their state.
+
+##Computed Properties
+When using computed properties, we can extend what we've learned about co-dependent properties to ensure they work correctly.
+
+Take this example:
+```
+<template>
+  <first-el hidden="{{getComputedState(item)}}"></first-el>
+</template>
+Polymer({
+  is: 'first-el',
+  properties: {
+    item: {
+      type: Object,
+      notify: true,
+      value: function(){ return {}; }
+    },
+    state: {
+      type: Boolean,
+      notify: true,
+      value: false
+    }
+  },
+  getComputedState: function(i){
+    // Hide first-el under certain conditions...
+    if( this.state === true && i.someProperty === 'foo' ){
+      return true;
+    }
+  }
+});
+```
+
+This looks like it should work but _It Just Doesn't Work™_.
+
+Instead, we get:
+
+`Uncaught ReferenceError: state is not defined`
+
+The problem is that the code fails during the initialization of the element. It's not as simple as detecting an `undefined` state, either. The computed property fires every time _all_ the listed properties change, an only then. Therein is the clue to resolving this problem but first...
+
+### Computed Properties: What Doesn't Work
+We can't use our previous tricks so easily here. The problem is that the return value from the function is what is needed in the computed property so using the `enqueue` or `async` methods becomes harder to work with as the return values from these functions aren't, without some effort and refactoring, what we are looking for. Fortunately, there is a very simple solution.
+
+### The Correct Way to Use Co-Dependent Computed Properties
+Simply include all the dependent properties in the function call:
+
+```
+<template>
+<first-el hidden="{{getComputedState(item, state)}}"></first-el>
+</template>
+Polymer({
+  is: 'first-el',
+  properties: {
+    item: {
+      type: Object,
+      notify: true,
+      value: function(){ return {}; }
+      },
+    state: {
+      type: Boolean,
+      notify: true,
+      value: false
+    }
+  },
+  getComputedState: function(i, s){
+    // Hide first-el under certain conditions...
+    if( s === true && i.someProperty === 'foo' ){
+      return true;
+    }
+  }
+});
+```
+Note the inclusion of `state` in the function call.
+
+While I also the changed the function to remove a dependence on `this.state` and instead use the local variable `s`, that is optional. `this.state` will be properly initialized so you can reference it either way since it's just a pointer to the same object, i.e. `s === this.state // ==> true`
+
+This works because, as I said, the computed property fires every time _all_ the listed properties change. While I haven't investigated this, I assume that computed properties rely on the same code that `observers: [ 'doSomething(item, state)' ]` does.
+
